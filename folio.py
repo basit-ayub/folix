@@ -2,11 +2,12 @@ import fitz
 import argparse
 import os
 import re
-
+import json
+from mistralai import Mistral
 fitz.TOOLS.mupdf_display_errors(False)
 
-# Configuration: Titles containing these words will be skipped
-BLOCKLIST = [ "half title","series page","title page","epilogue","cover","bibliography", "index", "contents", "preface", "acknowledgments", "copyright"]
+# List to remove unnecessary pages.
+BLOCKLIST = [ "edition","appendix","references","half title","series page","title page","epilogue","cover","bibliography", "index", "contents", "preface", "acknowledgments", "copyright"]
 
 def sanitize_filename(name):
 
@@ -17,6 +18,218 @@ def sanitize_filename(name):
 
     return clean_name.strip()
 
+def get_most_common_size(doc):
+    styles = {}
+    for i in range(min(5, len(doc))):  # First 5 pages
+        try:
+            page = doc[min(i + 15, len(doc) - 1)]  # Avoid the initial front matter.
+            blocks = page.get_text("dict")["blocks"]
+            for b in blocks:
+                if "lines" in b:
+                    for line in b["lines"]:
+                        for span in line["spans"]:
+                            s = round(span["size"], 1)
+                            styles[s] = styles.get(s, 0) + len(span["text"])
+        except:
+            continue
+
+    if not styles: return 11.0   # default to 11
+    return sorted(styles.items(), key=lambda x: x[1], reverse=True)[0][0]
+
+def calculate_global_offset(doc, ai_toc):
+    if not ai_toc: return 0
+
+    # We use the first chapter as anchor
+    first_ch_title = ai_toc[0][1]
+    first_ch_page_ai = ai_toc[0][2]
+
+    # Heuristics
+    body_size = get_most_common_size(doc)
+    threshold_size = body_size * 1.1  # Title must be >10% bigger than body
+
+    #print(f"Calibrating offset (Searching for '{first_ch_title}')...")
+
+    # Scan the first 50 pages for the visual title
+    found_page_idx = -1
+
+    for i in range(min(50, len(doc))):  # Search first 50 pages
+        page = doc[i]
+
+        # Optimization: Only look at top 50% of page
+        rect = page.rect
+        header_zone = fitz.Rect(0, 0, rect.width, rect.height * 0.6)
+
+        # Get blocks in header zone
+        blocks = page.get_text("dict", clip=header_zone)["blocks"]
+
+        for b in blocks:
+            if "lines" not in b: continue
+            for line in b["lines"]:
+                for span in line["spans"]:
+                    text = span["text"].strip()
+                    size = span["size"]
+
+                    if size > threshold_size:
+                        # Simple fuzzy match
+                        clean_title = re.sub(r'\d+', '', first_ch_title).strip().lower()
+                        clean_text = re.sub(r'\d+', '', text).strip().lower()
+
+                        # Check for at least 4 chars
+                        if len(clean_title) > 4 and clean_title in clean_text:
+                            found_page_idx = i + 1  # +1 for 1-based indexing
+                            break
+
+                        # Reverse check
+                        if len(clean_text) > 4 and clean_text in clean_title:
+                            found_page_idx = i + 1
+                            break
+
+            if found_page_idx != -1: break
+        if found_page_idx != -1: break
+
+    if found_page_idx != -1:
+        # Calculate Offset
+        offset = found_page_idx - first_ch_page_ai
+       # print(f"      -> Found visual match on PDF Page {found_page_idx}.")
+       # print(f"      -> Calculated Offset: {offset} pages.")
+        return offset
+    else:
+        print(f"Could not visually verify start page. Assuming Offset 0.")
+        return 0
+
+def get_physical_text(page):
+
+    blocks = page.get_text("dict")["blocks"]
+    all_spans = []
+
+    for b in blocks:
+        if "lines" in b:
+            for l in b["lines"]:
+                for s in l["spans"]:
+                    all_spans.append(s)
+
+    if not all_spans: return ""
+
+    #sort by x-axis
+    all_spans.sort(key=lambda s: (round(s["origin"][1]), s["origin"][0]))
+
+    lines = []
+    current_line = [all_spans[0]]
+
+    for span in all_spans[1:]:
+        # If vertical position is close (within 5 pixels), it's the same line
+        prev_y = current_line[-1]["origin"][1]
+        curr_y = span["origin"][1]
+
+        if abs(curr_y - prev_y) < 5:   #proximity heuristic
+            current_line.append(span)
+        else:
+            # New line detected
+            lines.append(current_line)
+            current_line = [span]
+    lines.append(current_line)
+
+    # Join
+    final_output = []
+    for line_spans in lines:
+        # Sort left-to-right within the line just to be safe
+        line_spans.sort(key=lambda s: s["origin"][0])
+        text_line = " ".join([s["text"].strip() for s in line_spans])
+        final_output.append(text_line)
+
+    return "\n".join(final_output)
+
+def get_toc_text_from_pdf(doc):
+    start_page = -1
+
+    # search in first 20 pages
+    for i in range(min(20, len(doc))):
+
+        page_text = doc[i].get_text().lower()
+        if "contents" in page_text[:800] or "index" in page_text[:500]:
+            start_page = i
+            #print(f"   found 'Contents' text on page {i + 1}...")
+            break
+
+    if start_page == -1: return None
+
+    # 2. Extract using physical extraction
+    full_text = ""
+    pages_to_scan = 10
+
+    for i in range(start_page, min(start_page + pages_to_scan, len(doc))):
+        text = get_physical_text(doc[i])
+
+        filtered_lines = []
+        for line in text.split('\n'):
+            line = line.strip()
+            if not line: continue
+
+            # keep lines that have a number at end (chapter name ------ page number)
+            if re.search(r'(\d+|[ivxlc]+)$', line.lower()):
+                filtered_lines.append(line)
+            elif len(line) < 80 and line.isupper():
+                filtered_lines.append(line)
+
+        full_text += f"\n--- PDF Page {i + 1} ---\n"
+        full_text += "\n".join(filtered_lines)
+
+    return full_text
+
+def generate_toc_with_mistral(toc_text):
+    api_key = os.getenv("MISTRAL_API_KEY")
+    if not api_key:
+        #print("Error: MISTRAL_API_KEY environment variable not set.")
+        return None
+
+    #print("Sending text to Mistral AI for analysis...")
+
+    try:
+        client = Mistral(api_key=api_key)
+
+        prompt = f"""
+        You are a PDF parsing assistant. I will provide text from a book's Table of Contents.
+        Extract the Chapter Titles and their Starting Page Numbers.
+
+        Rules:
+        1. Return ONLY a valid JSON list. Do not include markdown formatting (like ```json).
+        2. JSON Format: [{{"title": "Chapter Name", "page": 15}}, {{"title": "Next Chapter", "page": 20}}]
+        3. Convert Roman Numerals (ix, x) to integers if possible, or ignore them if they are just front-matter.
+        4. Do not invent page numbers. If a page number is missing, skip that chapter.
+        5. Ignore "Preface", "Foreword", "Index" if they don't seem like main chapters.
+        6. Do NOT include any starting lines explaining the output. Provide only the json list.
+
+        Here is the raw text:
+        {toc_text}
+        """
+
+        chat_response = client.chat.complete(
+            model="mistral-small-latest",
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+        )
+
+        response_content = chat_response.choices[0].message.content.strip()
+        if response_content.startswith("```"):
+            response_content = response_content.split("```")[1]
+        if response_content.startswith("json"):
+            response_content = response_content[4:]
+        data = json.loads(response_content)
+
+        formatted_toc = []
+        for item in data:
+            formatted_toc.append([1, item['title'], int(item['page'])])
+
+        return formatted_toc
+
+    except Exception as e:
+        print(f"Mistral Parsing failed: {e}")
+        return None
+
 
 def extract_chapters(args):
     input_path = args.input_file
@@ -26,22 +239,45 @@ def extract_chapters(args):
     try:
         doc = fitz.open(input_path)
         toc = doc.get_toc()
+        #toc = []
 
+        # if no TOC use Mistral API
         if not toc:
-            print("⚠️  No Table of Contents found.")
-            return
+            print("No Metadata Table of Contents found.")
+            print("Attempting AI extraction via Mistral API...")
 
-        # ---------------------------------------------------------
-        # 1. Analyze Hierarchy & Interactive Menu
-        # ---------------------------------------------------------
+            raw_toc_text = get_toc_text_from_pdf(doc)
+
+            if raw_toc_text:
+                ai_toc = generate_toc_with_mistral(raw_toc_text)
+
+                if ai_toc:
+                    print(f"Mistral successfully identified {len(ai_toc)} chapters.")
+                    offset = calculate_global_offset(doc, ai_toc)
+
+                    # Apply offset to all chapters
+                    adjusted_toc = []
+                    for item in ai_toc:
+                        lvl, title, page_num = item
+                        new_page = page_num + offset
+                        adjusted_toc.append([lvl, title, new_page])
+
+                    toc = adjusted_toc
+                    target_level = 1
+                else:
+                    print("Mistral could not parse the content.")
+                    return
+
+        # Interactive menu for TOC extraction
         level_titles = {}
         for item in toc:
             lvl, title = item[0], item[1]
-            if lvl not in level_titles: level_titles[lvl] = []
+            if lvl not in level_titles:
+                level_titles[lvl] = []
             level_titles[lvl].append(title)
 
         if target_level is None:
-            print(f"\n📘  Analyzing structure of: {os.path.basename(input_path)}")
+            print(f"\nAnalyzing structure of: {os.path.basename(input_path)}")
             print("-" * 80)
             print(f"{'Lvl':<4} | {'Count':<6} | {'Samples (First 3 items)'}")
             print("-" * 80)
@@ -60,35 +296,29 @@ def extract_chapters(args):
 
             while True:
                 user_input = input("\nSelect a Level to extract (or 'q' to quit): ").strip()
-                if user_input.lower() == 'q': return
+                if user_input.lower() == 'q':
+                    return
                 if user_input.isdigit() and int(user_input) in level_titles:
                     target_level = int(user_input)
                     break
                 else:
                     print("❌ Invalid level.")
 
-        # ---------------------------------------------------------
-        # 2. Preparation
-        # ---------------------------------------------------------
-        print(f"\n🚀 Extracting Level {target_level} (Including all sub-chapters)...")
+
+        print(f"\nExtracting Level {target_level} ...")
 
         if not output_dir:
             base_name = os.path.splitext(os.path.basename(input_path))[0]
             output_dir = f"{base_name}_chapters"
-        if not os.path.exists(output_dir): os.makedirs(output_dir)
-
-        # ---------------------------------------------------------
-        # 3. Smart Extraction Logic
-        # ---------------------------------------------------------
-        # We walk through the TOC. When we find a target_level item,
-        # we look forward until we hit another item of the SAME level (or higher).
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
 
         valid_chapters = []
 
         for i, item in enumerate(toc):
             lvl, title, start_page = item[0], item[1], item[2]
 
-            # We only care if this item matches our target level
+            # only cater to selected level
             if lvl != target_level:
                 continue
 
@@ -110,15 +340,15 @@ def extract_chapters(args):
                 next_lvl = toc[j][0]
                 next_page = toc[j][2]
 
-                # We stop ONLY if we hit a sibling (Same Level) or a parent (Higher Level/Lower Number)
-                # Example: We are Level 2. We stop at next Level 2 OR next Level 1.
-                # We do NOT stop at Level 3, 4, 5 (children).
+                # We stop ONLY if we hit a same level or higher
+
                 if next_lvl <= target_level:
                     end_page = next_page - 1
                     break
 
             # Sanity Check
-            if end_page < start_page: end_page = start_page
+            if end_page < start_page:
+                end_page = start_page
 
             valid_chapters.append({
                 "title": title,
@@ -128,16 +358,18 @@ def extract_chapters(args):
 
         print(f"   Found {len(valid_chapters)} valid chapters.\n")
 
-        # ---------------------------------------------------------
-        # 4. Save Files
-        # ---------------------------------------------------------
+        # Save files
+
         for i, chapter in enumerate(valid_chapters):
             safe_title = sanitize_filename(chapter['title'])
             out_name = f"{i + 1:02d}_{safe_title}.pdf"
             out_path = os.path.join(output_dir, out_name)
 
             new_doc = fitz.open()
+
+            # Use the context manager to silence warnings
             new_doc.insert_pdf(doc, from_page=chapter['start'] - 1, to_page=chapter['end'] - 1)
+
             new_doc.save(out_path)
 
             pg_count = (chapter['end'] - chapter['start']) + 1
@@ -220,7 +452,7 @@ def merge_pdf(args):
 def main():
     parser = argparse.ArgumentParser(description="Folio: A tool to split and merge PDFs.")
 
-    # 1. Create Subparsers (This creates the "split" and "merge" sub-commands)
+    # Subparsers
     subparsers = parser.add_subparsers(dest="command", required=True, help="Choose a command")
 
     # --- SPLIT COMMAND ---
