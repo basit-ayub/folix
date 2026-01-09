@@ -124,8 +124,11 @@ folix merge <pdf_names> -output <output_file_name>
 Split a page range manually.
 ```bash
 folix split input.pdf --start <start_page> --end <end_page> --output <output_file_name> 
+```
 
-## 🛠️ How It Works (Under the Hood)
+---
+
+## 🛠️ How It Works
 
 Folix uses a **three‑stage fallback system** to ensure accurate chapter extraction:
 
