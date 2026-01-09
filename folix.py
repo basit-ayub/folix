@@ -7,7 +7,7 @@ from mistralai import Mistral
 fitz.TOOLS.mupdf_display_errors(False)
 
 # List to remove unnecessary pages.
-BLOCKLIST = [ "edition","appendix","references","half title","series page","title page","epilogue","cover","bibliography", "index", "contents", "preface", "acknowledgments", "copyright"]
+BLOCKLIST = [ "About the author","edition","appendix","references","half title","series page","title page","epilogue","cover","bibliography", "index", "contents", "preface", "acknowledgments", "copyright"]
 
 def sanitize_filename(name):
 
@@ -179,7 +179,12 @@ def get_toc_text_from_pdf(doc):
 def generate_toc_with_mistral(toc_text):
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
-        #print("Error: MISTRAL_API_KEY environment variable not set.")
+        print("\n❌ API Key Missing.")
+        print("To use the AI Chapter Detector, you need a free Mistral API key.")
+        print("1. Get a key here: https://console.mistral.ai/")
+        print("2. Set it in your terminal:")
+        print("   Windows: $env:MISTRAL_API_KEY='your_key'")
+        print("   Mac/Linux: export MISTRAL_API_KEY='your_key'")
         return None
 
     #print("Sending text to Mistral AI for analysis...")
@@ -229,7 +234,6 @@ def generate_toc_with_mistral(toc_text):
     except Exception as e:
         print(f"Mistral Parsing failed: {e}")
         return None
-
 
 def extract_chapters(args):
     input_path = args.input_file
@@ -380,7 +384,6 @@ def extract_chapters(args):
     except Exception as e:
         print(f"An error occurred: {e}")
 
-
 def split_pdf(args):
 
     input_path = args.input_file
@@ -416,7 +419,6 @@ def split_pdf(args):
     except Exception as e:
         print(f"An error occurred: {e}")
 
-
 def merge_pdf(args):
 
     input_files = args.input_files
@@ -448,15 +450,14 @@ def merge_pdf(args):
     except Exception as e:
         print(f"An error occurred: {e}")
 
-
 def main():
-    parser = argparse.ArgumentParser(description="Folio: A tool to split and merge PDFs.")
+    parser = argparse.ArgumentParser(description="Folix: A tool to split and merge PDFs.")
 
     # Subparsers
     subparsers = parser.add_subparsers(dest="command", required=True, help="Choose a command")
 
     # --- SPLIT COMMAND ---
-    # folio.py split input.pdf -s 1 -e 5
+    # folix split input.pdf -s 1 -e 5
     parser_split = subparsers.add_parser("split", help="Split a PDF by page range")
     parser_split.add_argument("input_file", help="Path to the PDF file")
     parser_split.add_argument("--start", "-s", type=int, required=True, help="First page")
@@ -465,7 +466,7 @@ def main():
     parser_split.set_defaults(func=split_pdf)
 
     # --- MERGE COMMAND ---
-    # folio.py merge file1.pdf file2.pdf file3.pdf -o final.pdf
+    # folix merge file1.pdf file2.pdf file3.pdf -o final.pdf
     parser_merge = subparsers.add_parser("merge", help="Merge multiple PDFs")
     # nargs='+' means "gather 1 or more arguments into a list"
     parser_merge.add_argument("input_files", nargs='+', help="List of PDF files to merge")
@@ -473,11 +474,10 @@ def main():
     parser_merge.set_defaults(func=merge_pdf)
 
     # ... inside main() ...
-
     parser_extract = subparsers.add_parser("extract", help="Auto-extract chapters")
     parser_extract.add_argument("input_file", help="Path to the PDF file")
     parser_extract.add_argument("--output-dir", "-d", help="Directory to save chapters")
-    parser_extract.add_argument("--level", "-l", type=int, help="Which hierarchy level to extract (1=Part, 2=Chapter)")
+    parser_extract.add_argument("--level", "-l", type=int, help="Which hierarchy level to extract (1=Part, 2=Chapter, 3= Sub-sections)")
 
     parser_extract.set_defaults(func=extract_chapters)
 
@@ -485,7 +485,6 @@ def main():
 
     # Execute the function associated with the chosen command
     args.func(args)
-
 
 if __name__ == "__main__":
     main()
