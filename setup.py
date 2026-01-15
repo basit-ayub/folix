@@ -4,7 +4,7 @@ setup(
     name="folix",
     license="MIT",
     license_files=[],
-    version="1.0.0",
+    version="1.0.1",
     description="A smart PDF splitter that uses AI to extract chapters.",
     long_description=open("README.md", "r", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
@@ -15,8 +15,6 @@ setup(
     install_requires=[
         "pymupdf",
         "mistralai",
-        "argparse",
-        "json",
     ],
     entry_points={
         "console_scripts": [

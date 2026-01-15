@@ -1,4 +1,4 @@
-# Folix ✂️
+# Folix 
 
 **A smart, AI-powered PDF splitter.**
 
@@ -6,29 +6,29 @@ Folix is a CLI tool designed to split large PDF textbooks and documents into cle
 
 ---
 
-## 🚀 Features
+## Features
 
-* 📚 **Smart Chapter Extraction**
+* **Smart Chapter Extraction**
   Automatically detects chapters using native PDF bookmarks (ToC).
 
-* 🤖 **AI‑Powered Fallback**
+*  **AI‑Powered Fallback**
   If bookmarks are missing, Folix reads the visual *Table of Contents* page and uses Mistral AI to identify chapters.
 
-* 🧠 **Intelligent Offset Calculation**
+*  **Intelligent Offset Calculation**
   Automatically aligns printed page numbers  with the physical PDF structure .
 
-* 👁️ **Physical Layout Analysis**
+*  **Physical Layout Analysis**
   Correctly parses multi‑column Tables of Contents that confuse standard PDF tools.
 
-* 🔍 **Interactive Inspection**
+*  **Interactive Inspection**
   Visualizes the document structure so you can choose exactly which hierarchy level (Part, Chapter, Section) to extract.
 
-* 🛠️ **Zero‑Config CLI**
+*  **Zero‑Config CLI**
   Simple commands for extracting, merging, and inspecting PDFs.
 
 ---
 
-## 📦 Installation
+##  Installation
 
 ### Option A: Install via PyPI (Recommended)
 
@@ -46,7 +46,7 @@ pip install .
 
 ---
 
-## 🔑 Setup (AI Features)
+##  Setup (AI Features)
 
 Folix works out‑of‑the‑box for PDFs that include standard bookmarks. For scanned books or files without metadata, you’ll need a **free Mistral AI API key** to enable automatic chapter detection.
 
@@ -70,7 +70,7 @@ $env:MISTRAL_API_KEY="your_actual_key_here"
 
 ---
 
-## 📖 Usage
+##  Usage
 
 ### 1. Extract Chapters
 
@@ -98,7 +98,7 @@ folix extract <file_name>
 **Example Output:**
 
 ```text
-📘  Analyzing structure of: complex_book.pdf
+  Analyzing structure of: complex_book.pdf
 --------------------------------------------------------------------------------
 Lvl  | Count  | Samples (First 3 items)
 --------------------------------------------------------------------------------
@@ -128,7 +128,7 @@ folix split input.pdf --start <start_page> --end <end_page> --output <output_fil
 
 ---
 
-## 🛠️ How It Works
+##  How It Works
 
 Folix uses a **three‑stage fallback system** to ensure accurate chapter extraction:
 
@@ -146,7 +146,7 @@ Folix uses a **three‑stage fallback system** to ensure accurate chapter extrac
 
 ---
 
-## 🤝 Contributing
+##  Contributing
 
 Contributions are welcome!
 
@@ -170,6 +170,6 @@ Contributions are welcome!
 
 ---
 
-## 📄 License
+##  License
 
 Distributed under the **MIT License**. See ```LICENSE```
